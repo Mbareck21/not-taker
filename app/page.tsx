@@ -1,102 +1,309 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import type { INote } from '@/lib/models/Note';
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
+
+import NoteCard from '@/components/NoteCard';
+import NoteForm, { NoteFormData } from '@/components/NoteForm';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { PlusCircle, Search, SlidersHorizontal } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+
+export default function HomePage() {
+  const [notes, setNotes] = useState<INote[]>([]);
+  const [filteredNotes, setFilteredNotes] = useState<INote[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'alphabetical'>('newest');
+
+  // Fetch notes on component mount
+  useEffect(() => {
+    fetchNotes();
+  }); 
+
+  const sortNotes = (notesToSort: INote[] | undefined, order: 'newest' | 'oldest' | 'alphabetical'): INote[] => {
+    // Guard against undefined or null values
+    if (!notesToSort || !Array.isArray(notesToSort)) {
+      return [];
+    }
+
+    // Create a new array to avoid mutating the original
+    const sortedNotes = [...notesToSort];
+
+    try {
+      switch (order) {
+        case 'newest':
+          return sortedNotes.sort((a, b) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+        case 'oldest':
+          return sortedNotes.sort((a, b) => 
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+        case 'alphabetical':
+          return sortedNotes.sort((a, b) => 
+            (a.subject || '').localeCompare(b.subject || '')
+          );
+        default:
+          return sortedNotes;
+      }
+    } catch (error) {
+      console.error('Error sorting notes:', error);
+      return sortedNotes;
+    }
+  };
+
+  const fetchNotes = async () => {
+    setIsLoading(true);
+    try {
+      const response = await axios.get('/api/notes');
+      
+      if (response.data?.success && Array.isArray(response.data.data)) {
+        const notesData = response.data.data.map((note: INote) => ({
+          ...note,
+          createdAt: new Date(note.createdAt),
+          updatedAt: new Date(note.updatedAt)
+        }));
+        setNotes(notesData);
+        setFilteredNotes(sortNotes(notesData, sortOrder));
+      } else {
+        console.error('Invalid response format:', response.data);
+        toast.error('Failed to load notes: Invalid data format');
+        setNotes([]);
+        setFilteredNotes([]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch notes:", error);
+      toast.error("Failed to load notes. Please try refreshing.");
+      setNotes([]);
+      setFilteredNotes([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle creating a new note
+  const handleCreateNote = async (data: NoteFormData) => {
+    setIsSubmitting(true);
+    try {
+      // Process content from string to array format
+      const contentArray = data.content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      const response = await axios.post('/api/notes', {
+        ...data,
+        content: contentArray
+      });
+      
+      // Update filtered notes after adding new note
+      const newNote = response.data as INote;  // Type assertion
+      setNotes(prevNotes => {
+        const updatedNotes = [newNote, ...(prevNotes || [])];
+        return sortNotes(updatedNotes, sortOrder);
+      });
+      
+      toast.success("Note created successfully!");
+      setIsDialogOpen(false);
+    } catch (error) {
+      console.error("Failed to create note:", error);
+      toast.error("Failed to create note. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle deleting a note
+  const handleDeleteNote = async (id: string) => {
+    // Optimistic UI update: remove note immediately
+    const originalNotes = [...notes];
+    setNotes(prevNotes => prevNotes.filter(note => note.id !== id));
+    toast.info("Deleting note..."); // Inform user
+
+    try {
+      await axios.delete(`/api/notes/${id}`);
+      toast.success("Note deleted successfully!");
+    } catch (error) {
+      console.error("Failed to delete note:", error);
+      toast.error("Failed to delete note. Restoring note.");
+      // Revert UI if delete fails
+      setNotes(originalNotes);
+    }
+  };
+
+  // Note card animation variants
+  const cardVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: (i: number) => ({
+      opacity: 1,
+      y: 0,
+      transition: {
+        delay: i * 0.05,
+        duration: 0.3,
+      }
+    }),
+    exit: { opacity: 0, scale: 0.9, transition: { duration: 0.2 } }
+  };
+
+  // Update useEffect for filtering to handle undefined notes
+  useEffect(() => {
+    if (!Array.isArray(notes)) {
+      setFilteredNotes([]);
+      return;
+    }
+
+    try {
+      let result = [...notes];
+      
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        result = result.filter(note => 
+          note?.subject?.toLowerCase().includes(query) || 
+          note?.subHeader?.toLowerCase().includes(query) ||
+          (Array.isArray(note?.content) && note.content.some(item => 
+            item?.toLowerCase().includes(query)
+          ))
+        );
+      }
+      
+      setFilteredNotes(sortNotes(result, sortOrder));
+    } catch (error) {
+      console.error('Error filtering notes:', error);
+      setFilteredNotes([]);
+    }
+  }, [notes, searchQuery, sortOrder]);
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="min-h-screen flex flex-col">
+      <div className="flex-grow container mx-auto px-4 py-8 max-w-7xl">
+        <header className="mb-8">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              Note Maestro
+            </h1>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="lg" className="gap-2">
+                    <PlusCircle className="h-5 w-5" /> Add New Note
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[550px]">
+                  <DialogHeader>
+                    <DialogTitle>Create New Note</DialogTitle>
+                    <DialogDescription>
+                      Fill in the details for your new note. Enter bullet points on separate lines.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <NoteForm
+                    onSubmit={handleCreateNote}
+                    isSubmitting={isSubmitting}
+                    submitButtonText="Create Note"
+                  />
+                </DialogContent>
+              </Dialog>
+            </div>
+          </div>
+          
+          {/* Search and filter controls */}
+          <div className="flex flex-col sm:flex-row gap-4 pb-4">
+            <div className="relative flex-grow">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Input
+                placeholder="Search notes..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-gray-400" />
+              <label htmlFor="sortOrder" className="sr-only">Sort Notes</label>
+              <select 
+                id="sortOrder"
+                value={sortOrder} 
+                onChange={(e) => setSortOrder(e.target.value as 'newest' | 'oldest' | 'alphabetical')}
+                className="p-2 border rounded bg-background"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="alphabetical">A to Z</option>
+              </select>
+            </div>
+          </div>
+        </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+        {/* Notes Grid with Animations */}
+        {isLoading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+          </div>
+        ) : filteredNotes.length === 0 ? (
+          <div className="text-center py-16 bg-muted/20 rounded-lg">
+            {searchQuery ? (
+              <div>
+                <p className="text-2xl font-semibold mb-2">No matching notes</p>
+                <p className="text-muted-foreground">Try adjusting your search query</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-2xl font-semibold mb-2">No notes yet</p>
+                <p className="text-muted-foreground mb-4">Create your first note to get started!</p>
+                <Button onClick={() => setIsDialogOpen(true)}>
+                  <PlusCircle className="mr-2 h-4 w-4" /> Create Note
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <AnimatePresence mode="wait">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filteredNotes.map((note, index) => {
+                // Guard against potentially undefined notes
+                if (!note || !note.id) return null;
+                
+                return (
+                  <motion.div
+                    key={`note-${note.id}`}
+                    custom={index}
+                    variants={cardVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    layout
+                  >
+                    <NoteCard 
+                      key={note.id} 
+                      note={note} 
+                      onDelete={handleDeleteNote}
+                    />
+                  </motion.div>
+                );
+              })}
+            </div>
+          </AnimatePresence>
+        )}
+      </div>
+      
+      {/* Copyright Footer */}
+      <footer className="py-4 text-center text-sm text-muted-foreground border-t">
+        <p>© {new Date().getFullYear()} Note Maestro. All rights reserved.</p>
       </footer>
     </div>
   );
