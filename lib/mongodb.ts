@@ -12,11 +12,16 @@ const connectMongoDB = async () => {
       w: 'majority' as const,
     };
 
-    await mongoose.connect(process.env.MONGODB_URI as string, opts);
-    console.log('MongoDB connected successfully');
+    try {
+      await mongoose.connect(process.env.MONGODB_URI as string, opts);
+      console.log('MongoDB connected successfully');
+    } catch (error) {
+      console.error('MongoDB connection error in connect:', error);
+      throw error; // Re-throw to be caught by the outer try-catch
+    }
 
     mongoose.connection.on('error', (error) => {
-      console.error('MongoDB connection error:', error);
+      console.error('MongoDB connection error in event:', error);
     });
 
     mongoose.connection.on('disconnected', () => {

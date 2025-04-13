@@ -33,7 +33,7 @@ export default function HomePage() {
   // Fetch notes on component mount
   useEffect(() => {
     fetchNotes();
-  }); 
+  }, []); // Added empty dependency array
 
   const sortNotes = (notesToSort: INote[] | undefined, order: 'newest' | 'oldest' | 'alphabetical'): INote[] => {
     // Guard against undefined or null values
@@ -111,15 +111,29 @@ export default function HomePage() {
         content: contentArray
       });
       
-      // Update filtered notes after adding new note
-      const newNote = response.data as INote;  // Type assertion
-      setNotes(prevNotes => {
-        const updatedNotes = [newNote, ...(prevNotes || [])];
-        return sortNotes(updatedNotes, sortOrder);
-      });
-      
-      toast.success("Note created successfully!");
-      setIsDialogOpen(false);
+      if (response.data?.success) {
+        // Transform the note data to ensure proper date handling
+        const newNote: INote = {
+          ...response.data.data,
+          id: response.data.data.id || response.data.data._id?.toString(),
+          createdAt: new Date(response.data.data.createdAt),
+          updatedAt: new Date(response.data.data.updatedAt)
+        };
+
+        // Update both notes and filtered notes atomically to ensure consistency
+        const updateNotes = (prevNotes: INote[]) => {
+          const updatedNotes = [newNote, ...prevNotes];
+          return sortNotes(updatedNotes, sortOrder);
+        };
+
+        setNotes(updateNotes);
+        setFilteredNotes(updateNotes);
+        
+        toast.success("Note created successfully!");
+        setIsDialogOpen(false);
+      } else {
+        throw new Error('Invalid response format from server');
+      }
     } catch (error) {
       console.error("Failed to create note:", error);
       toast.error("Failed to create note. Please try again.");
@@ -130,19 +144,30 @@ export default function HomePage() {
 
   // Handle deleting a note
   const handleDeleteNote = async (id: string) => {
-    // Optimistic UI update: remove note immediately
+    // Store original state for rollback
     const originalNotes = [...notes];
-    setNotes(prevNotes => prevNotes.filter(note => note.id !== id));
+    const originalFiltered = [...filteredNotes];
+    
+    // Optimistic UI update for both states
+    const filterNotes = (notes: INote[]) => notes.filter(note => note.id !== id);
+    setNotes(filterNotes);
+    setFilteredNotes(filterNotes);
+    
     toast.info("Deleting note..."); // Inform user
 
     try {
-      await axios.delete(`/api/notes/${id}`);
-      toast.success("Note deleted successfully!");
+      const response = await axios.delete(`/api/notes/${id}`);
+      if (response.data?.success) {
+        toast.success("Note deleted successfully!");
+      } else {
+        throw new Error('Delete operation failed');
+      }
     } catch (error) {
       console.error("Failed to delete note:", error);
       toast.error("Failed to delete note. Restoring note.");
-      // Revert UI if delete fails
+      // Revert both states if delete fails
       setNotes(originalNotes);
+      setFilteredNotes(originalFiltered);
     }
   };
 
